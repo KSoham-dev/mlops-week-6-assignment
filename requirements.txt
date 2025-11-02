@@ -1,3 +1,6 @@
 scikit-learn
 dvc
 dvc-gs
+pandas
+mlflow
+pytest

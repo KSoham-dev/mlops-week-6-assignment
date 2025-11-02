@@ -1,14 +1,61 @@
-# .github/workflows/ci.yml
-# This is a STUB FILE on the MAIN branch
-# Its only purpose is to make this workflow "discoverable" by the API
-
 name: ci.yml
 on:
+  pull_request:
+      branches:
+        - main
   workflow_dispatch:
 
+permissions:
+  contents: write
+  pull-requests: write
+
 jobs:
-  # This placeholder job is required for the file to be valid
-  placeholder:
+  test-model:
     runs-on: ubuntu-latest
     steps:
-      - run: echo "This placeholder job makes the 'ci.yml' workflow discoverable by the API."
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Setup CML (Continuous Machine Learning)
+        uses: iterative/setup-cml@v2.0.1
+
+      - name: Install dependencies
+        run: |
+          pip install -r requirements.txt
+          pip install dvc[gcs]
+      
+      - name: Google Cloud Authentication
+        id: 'auth'
+        uses: 'google-github-actions/auth@v3'
+        with:
+          credentials_json: '${{ secrets.GCP_SA_KEY }}'
+
+      - name: Pull Data using dvc
+        run: |
+          dvc pull
+
+      - name: Load Model from mlflow
+        run: |
+          python3 -m src.get_model
+
+      - name: Run Tests
+        run: |
+          pytest -v &> test_output.txt 
+
+      - name: Create cml report
+        run: |
+          echo "# CML Test & Evaluation Report" > report.md
+
+          ## Section 1: Pytest Results
+          echo "" >> report.md # Add a blank line for spacing
+          echo "### Pytest Sanity Check" >> report.md
+          echo "\`\`\`" >> report.md # Start a code block for the text output
+          cat test_output.txt >> report.md
+          echo "\`\`\`" >> report.md # End the code block
+
+          ## Section 2: Evaluation Metrics Table
+          cat metrics.md >> report.md
+
+          cml comment create report.md
+        env:
+          REPO_TOKEN: ${{ secrets.GITHUB_TOKEN }}
