@@ -1,0 +1,14 @@
+# .github/workflows/ci.yml
+# This is a STUB FILE on the MAIN branch
+# Its only purpose is to make this workflow "discoverable" by the API
+
+name: ci.yml
+on:
+  workflow_dispatch:
+
+jobs:
+  # This placeholder job is required for the file to be valid
+  placeholder:
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "This placeholder job makes the 'ci.yml' workflow discoverable by the API."
