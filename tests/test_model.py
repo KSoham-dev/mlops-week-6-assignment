@@ -5,12 +5,12 @@ from sklearn.metrics import accuracy_score
 
 @pytest.fixture()
 def data():
-    data = pd.read_csv("./data.csv")
+    data = pd.read_csv("data/data.csv")
     return data
 
 @pytest.fixture()
 def trained_model():
-    model = joblib.load("./artifacts/model/model.pkl") 
+    model = joblib.load("artifacts/model/model.pkl") 
     return model
 
 def test_data_no_null_values(data):

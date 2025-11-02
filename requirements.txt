@@ -3,3 +3,4 @@ dvc
 dvc-gs
 pandas
 mlflow
+pytest
