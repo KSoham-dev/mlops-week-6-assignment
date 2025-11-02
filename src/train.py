@@ -40,44 +40,48 @@ param_grid = {
     'class_weight': [None, 'balanced']
 }
 
-with mlflow.start_run(run_name="Decision Tree Classifier Hyperparameter Tuning"):
-	rf = DecisionTreeClassifier(random_state=42)
-	grid_search = GridSearchCV(
-    	rf, param_grid, cv=5, scoring="accuracy", n_jobs=-1, verbose=1
-	)
+def train_model():
+    with mlflow.start_run(run_name="Decision Tree Classifier Hyperparameter Tuning"):
+        rf = DecisionTreeClassifier(random_state=42)
+        grid_search = GridSearchCV(
+            rf, param_grid, cv=5, scoring="accuracy", n_jobs=-1, verbose=1
+        )
 
-	grid_search.fit(X_train, y_train)
-    
-	best_score = grid_search.score(X_test, y_test)
-	print(f"Best parameters: {grid_search.best_params_}")
-	print(f"Best cross-validation score: {grid_search.best_score_:.3f}")
-	print(f"Test score: {best_score:.3f}")
+        grid_search.fit(X_train, y_train)
+        
+        best_score = grid_search.score(X_test, y_test)
+        print(f"Best parameters: {grid_search.best_params_}")
+        print(f"Best cross-validation score: {grid_search.best_score_:.3f}")
+        print(f"Test score: {best_score:.3f}")
 
-token = os.environ.get("GITHUB_PAT")
-owner = "KSoham-dev"
-repo = "mlops-assignments"
-branch = "dev"
+    token = os.environ.get("GITHUB_PAT")
+    owner = "KSoham-dev"
+    repo = "mlops-assignments"
+    branch = "dev"
 
-workflow_id = "ci.yml" 
+    workflow_id = "ci.yml" 
 
-url = f"https://api.github.com/repos/{owner}/{repo}/actions/workflows/{workflow_id}/dispatches"
+    url = f"https://api.github.com/repos/{owner}/{repo}/actions/workflows/{workflow_id}/dispatches"
 
-headers = {
-    "Accept": "application/vnd.github.v3+json",
-    "Authorization": f"token {token}",
-}
+    headers = {
+        "Accept": "application/vnd.github.v3+json",
+        "Authorization": f"token {token}",
+    }
 
-data = {
-    "ref": branch
-}
+    data = {
+        "ref": branch
+    }
 
-print(f"Triggering workflow '{workflow_id}' on branch '{branch}'...")
+    print(f"Triggering workflow '{workflow_id}' on branch '{branch}'...")
 
-try:
-    response = requests.post(url, json=data, headers=headers)
-    if response.status_code == 204:
-        print(f"Successfully triggered GitHub Action workflow.")
-    else:
-        print(f"Failed to trigger workflow. Status: {response.status_code}, Response: {response.text}")
-except Exception as e:
-    print(f"Error triggering GitHub Action: {e}")
+    try:
+        response = requests.post(url, json=data, headers=headers)
+        if response.status_code == 204:
+            print(f"Successfully triggered GitHub Action workflow.")
+        else:
+            print(f"Failed to trigger workflow. Status: {response.status_code}, Response: {response.text}")
+    except Exception as e:
+        print(f"Error triggering GitHub Action: {e}")
+
+if __name__ == "__main__":
+    train_model()
