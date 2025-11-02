@@ -1,4 +1,5 @@
 [core]
     remote = gcs_remote
+    autostage = true
 ['remote "gcs_remote"']
     url = gs://mlops-course-clean-vista-473214-i6/dvc-assets
