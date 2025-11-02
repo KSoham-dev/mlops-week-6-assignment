@@ -7,13 +7,13 @@ import requests
 import os
 import sys
 
-mlflow.set_tracking_uri("http://34.9.81.87:5000")
+mlflow.set_tracking_uri("http://34.170.230.68:5000")
 mlflow.sklearn.autolog(
 	max_tuning_runs=10,
 	registered_model_name="iris-classifier"
 )
 
-data = pd.read_csv("data.csv")
+data = pd.read_csv("data/data.csv")
 
 train, test = train_test_split(data, test_size = 0.2, stratify = data['species'], random_state = 42)
 X_train = train[['sepal_length','sepal_width','petal_length','petal_width']]
