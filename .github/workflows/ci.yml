@@ -36,7 +36,7 @@ jobs:
 
       - name: Load Model from mlflow
         run: |
-          python3 get_model.py
+          python3 -m src.get_model
 
       - name: Run Tests
         run: |

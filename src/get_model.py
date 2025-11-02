@@ -5,7 +5,7 @@ MODEL_NAME = "iris-classifier"
 SAVE_PATH = "artifacts"
 
 
-mlflow.set_tracking_uri("http://34.9.81.87:5000")
+mlflow.set_tracking_uri("http://34.170.230.68:5000")
 client = mlflow.tracking.MlflowClient()
 
 versions = client.search_model_versions(

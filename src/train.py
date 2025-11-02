@@ -5,13 +5,24 @@ import pandas as pd
 import mlflow
 import requests
 import os
-import sys
+
+experiment_name = "iris-classifier-model"
+artifact_location = "gs://mlops-course-clean-vista-473214-i6/mlflow-assets/iris-classifier-model"
 
 mlflow.set_tracking_uri("http://34.170.230.68:5000")
 mlflow.sklearn.autolog(
 	max_tuning_runs=10,
 	registered_model_name="iris-classifier"
 )
+
+experiment = mlflow.get_experiment_by_name(experiment_name)
+
+if experiment is None:
+    print(f"Creating new experiment '{experiment_name}'...")
+    mlflow.create_experiment(experiment_name, artifact_location=artifact_location)
+    mlflow.set_experiment(experiment_name)
+else:
+    mlflow.set_experiment(experiment_name)
 
 data = pd.read_csv("data/data.csv")
 
