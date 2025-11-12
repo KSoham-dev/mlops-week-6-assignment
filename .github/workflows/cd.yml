@@ -9,11 +9,11 @@ permissions:
 
 env:
   PROJECT_ID: clean-vista-473214-i6
-  AR_REGION: us-east1
+  AR_REGION: us-central1
   AR_REPOSITORY:  iris-classifier-docker
   IMAGE_NAME: iris-classifier-fastapi
   GKE_CLUSTER: iris-classifier-cluster
-  GKE_ZONE: us-central1
+  GKE_ZONE: us-east1
   DEPLOYMENT_NAME: iris-classifier-fastapi
   MANIFEST_PATH: k8s/deployment.yaml
   
