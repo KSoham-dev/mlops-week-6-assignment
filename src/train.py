@@ -3,25 +3,34 @@ from sklearn.tree import DecisionTreeClassifier
 from sklearn.model_selection import GridSearchCV
 import pandas as pd
 import mlflow
-import requests
 import os
+import logging
 
-experiment_name = "iris-classifier-model"
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
+logger = logging.getLogger(__name__)
+
+MLFLOW_TRACKING_URI = os.getenv("MLFLOW_TRACKING_URI")
+experiment_name = "iris-classifier-model-12"
 artifact_location = "gs://mlops-course-clean-vista-473214-i6/mlflow-assets/iris-classifier-model"
+registered_model_name = "iris-classifier"
 
-mlflow.set_tracking_uri("http://34.170.230.68:5000")
+mlflow.set_tracking_uri(MLFLOW_TRACKING_URI)
 mlflow.sklearn.autolog(
 	max_tuning_runs=10,
-	registered_model_name="iris-classifier"
+	registered_model_name=registered_model_name
 )
 
 experiment = mlflow.get_experiment_by_name(experiment_name)
 
 if experiment is None:
-    print(f"Creating new experiment '{experiment_name}'...")
+    logger.info(f"Creating new experiment '{experiment_name}'...")
     mlflow.create_experiment(experiment_name, artifact_location=artifact_location)
     mlflow.set_experiment(experiment_name)
 else:
+    logger.info(f"Using existing experiment '{experiment_name}'")
     mlflow.set_experiment(experiment_name)
 
 data = pd.read_csv("data/data.csv")
@@ -41,47 +50,27 @@ param_grid = {
 }
 
 def train_model():
+    logger.info("Starting model training...")
     with mlflow.start_run(run_name="Decision Tree Classifier Hyperparameter Tuning"):
+        logger.info("Initializing GridSearchCV...")
         rf = DecisionTreeClassifier(random_state=42)
         grid_search = GridSearchCV(
             rf, param_grid, cv=5, scoring="accuracy", n_jobs=-1, verbose=1
         )
 
+        logger.info("Fitting model...")
         grid_search.fit(X_train, y_train)
         
         best_score = grid_search.score(X_test, y_test)
-        print(f"Best parameters: {grid_search.best_params_}")
-        print(f"Best cross-validation score: {grid_search.best_score_:.3f}")
-        print(f"Test score: {best_score:.3f}")
-
-    token = os.environ.get("GITHUB_PAT")
-    owner = "KSoham-dev"
-    repo = "mlops-assignments"
-    branch = "dev"
-
-    workflow_id = "ci.yml" 
-
-    url = f"https://api.github.com/repos/{owner}/{repo}/actions/workflows/{workflow_id}/dispatches"
-
-    headers = {
-        "Accept": "application/vnd.github.v3+json",
-        "Authorization": f"token {token}",
-    }
-
-    data = {
-        "ref": branch
-    }
-
-    print(f"Triggering workflow '{workflow_id}' on branch '{branch}'...")
-
-    try:
-        response = requests.post(url, json=data, headers=headers)
-        if response.status_code == 204:
-            print(f"Successfully triggered GitHub Action workflow.")
-        else:
-            print(f"Failed to trigger workflow. Status: {response.status_code}, Response: {response.text}")
-    except Exception as e:
-        print(f"Error triggering GitHub Action: {e}")
+        
+        # Log test metrics explicitly
+        mlflow.log_metric("test_accuracy", best_score)
+        mlflow.log_metric("cv_accuracy", grid_search.best_score_)
+        
+        logger.info(f"Best parameters: {grid_search.best_params_}")
+        logger.info(f"Best cross-validation score: {grid_search.best_score_:.3f}")
+        logger.info(f"Test score: {best_score:.3f}")
+        logger.info("Training completed successfully")
 
 if __name__ == "__main__":
     train_model()
