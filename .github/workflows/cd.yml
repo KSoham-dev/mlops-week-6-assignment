@@ -1,16 +1,25 @@
 name: cd.yml
 
 on:
+  push:
+    branches:
+      - main
+    tags:
+      - 'v*'
   workflow_dispatch:
 
+concurrency:
+  group: cd-${{ github.ref }}
+  cancel-in-progress: false
+
 permissions:
-  contents: write
+  contents: read
   id-token: write
 
 env:
   PROJECT_ID: clean-vista-473214-i6
   AR_REGION: us-central1
-  AR_REPOSITORY:  iris-classifier-docker
+  AR_REPOSITORY: iris-classifier-docker
   IMAGE_NAME: iris-classifier-fastapi
   GKE_CLUSTER: iris-classifier-cluster
   GKE_ZONE: us-east1
@@ -20,113 +29,265 @@ env:
 jobs:
 
   infrastructure-setup:
+    name: Setup GKE Infrastructure
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    outputs:
+      cluster-exists: ${{ steps.check-cluster.outputs.exists }}
     
     steps:
-      - name: Google Cloud Authentication
-        uses: 'google-github-actions/auth@v2'
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
         with:
           credentials_json: ${{ secrets.GCP_SA }}
 
-      - name: Create GKE Cluster (If not found)
-        # Creates the GKE cluster instance using gcloud CLI
+      - name: Setup Cloud SDK
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Check for existing GKE Cluster
+        id: check-cluster
         run: |
           echo "Checking for cluster ${{ env.GKE_CLUSTER }}..."
-          if ! gcloud container clusters describe ${{ env.GKE_CLUSTER }} --zone ${{ env.GKE_ZONE }} --project ${{ env.PROJECT_ID }} --quiet; then
-            echo "Cluster not found. Creating a new GKE cluster..."
-            
-            gcloud container clusters create ${{ env.GKE_CLUSTER }} \
-              --zone ${{ env.GKE_ZONE }} \
-              --num-nodes=1 \
-              --machine-type=e2-small \
-              --release-channel=regular \
-              --project=${{ env.PROJECT_ID }}
+          if gcloud container clusters describe ${{ env.GKE_CLUSTER }} \
+            --zone ${{ env.GKE_ZONE }} \
+            --project ${{ env.PROJECT_ID }} \
+            --quiet 2>/dev/null; then
+            echo "exists=true" >> $GITHUB_OUTPUT
+            echo "Cluster ${{ env.GKE_CLUSTER }} already exists"
           else
-            echo "Cluster ${{ env.GKE_CLUSTER }} already exists. Skipping creation."
+            echo "exists=false" >> $GITHUB_OUTPUT
+            echo "Cluster not found"
           fi
 
+      - name: Create GKE Cluster
+        if: steps.check-cluster.outputs.exists == 'false'
+        run: |
+          echo "Creating new GKE cluster..."
+          gcloud container clusters create ${{ env.GKE_CLUSTER }} \
+            --zone ${{ env.GKE_ZONE }} \
+            --num-nodes=1 \
+            --machine-type=e2-small \
+            --disk-size=10 \
+            --disk-type=pd-standard \
+            --enable-autoscaling \
+            --min-nodes=1 \
+            --max-nodes=3 \
+            --enable-autorepair \
+            --enable-autoupgrade \
+            --release-channel=regular \
+            --enable-stackdriver-kubernetes \
+            --project=${{ env.PROJECT_ID }}
+          echo "Cluster created successfully"
+
   build-and-deploy:
+    name: Build and Deploy Application
     runs-on: ubuntu-latest
     needs: infrastructure-setup
+    timeout-minutes: 30
+    outputs:
+      image-tag: ${{ steps.build-info.outputs.image-tag }}
+      deployment-url: ${{ steps.get-url.outputs.url }}
     
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Set up Python
-        uses: actions/setup-python@v4
+        uses: actions/setup-python@v5
         with:
           python-version: '3.10'
+          cache: 'pip'
     
-      - name: Setup CML (Continuous Machine Learning)
-        uses: iterative/setup-cml@v2.0.1
+      - name: Setup CML
+        uses: iterative/setup-cml@v2
 
       - name: Install DVC
-        run: pip install dvc dvc-gs dvc[gcs]
+        run: |
+          pip install --upgrade pip
+          pip install dvc dvc-gs dvc[gcs]
       
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
+        with:
+          driver-opts: image=moby/buildkit:latest
         
-      - name: Google Cloud Authentication
-        uses: 'google-github-actions/auth@v2'
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
         with:
           credentials_json: ${{ secrets.GCP_SA }}
 
-      - name: Pull data from dvc
-        run: dvc pull
+      - name: Setup Cloud SDK
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Pull data from DVC
+        run: |
+          echo "Pulling data from DVC..."
+          dvc pull
+          echo "Data pulled successfully"
 
       - name: Configure Docker for Artifact Registry
-        run: gcloud auth configure-docker ${{ env.AR_REGION }}-docker.pkg.dev
-        
-      - name: Build and Push Docker Image to Artifact Registry
         run: |
-          FULL_IMAGE_TAG="${{ env.AR_REGION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.AR_REPOSITORY }}/${{ env.IMAGE_NAME }}:${{ github.sha }}"
+          gcloud auth configure-docker ${{ env.AR_REGION }}-docker.pkg.dev --quiet
+        
+      - name: Generate build info
+        id: build-info
+        run: |
+          SHORT_SHA=$(echo ${{ github.sha }} | cut -c1-7)
+          IMAGE_TAG="${SHORT_SHA}"
+          echo "image-tag=${IMAGE_TAG}" >> $GITHUB_OUTPUT
+          echo "short-sha=${SHORT_SHA}" >> $GITHUB_OUTPUT
+          echo "build-date=$(date -u +'%Y-%m-%dT%H:%M:%SZ')" >> $GITHUB_OUTPUT
+        
+      - name: Build and Push Docker Image
+        env:
+          IMAGE_TAG: ${{ steps.build-info.outputs.image-tag }}
+        run: |
+          FULL_IMAGE_TAG="${{ env.AR_REGION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.AR_REPOSITORY }}/${{ env.IMAGE_NAME }}:${IMAGE_TAG}"
           LATEST_TAG="${{ env.AR_REGION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.AR_REPOSITORY }}/${{ env.IMAGE_NAME }}:latest"
           
-          echo "Building image and tagging as :latest and :${{ github.sha }}"
-          docker build -t "${FULL_IMAGE_TAG}" -t "${LATEST_TAG}" .
+          echo "Building Docker image..."
+          echo "Image tags: ${IMAGE_TAG}, latest"
+          
+          docker build \
+            --tag "${FULL_IMAGE_TAG}" \
+            --tag "${LATEST_TAG}" \
+            --label "git.commit=${{ github.sha }}" \
+            --label "git.branch=${{ github.ref_name }}" \
+            --label "build.date=${{ steps.build-info.outputs.build-date }}" \
+            --cache-from type=registry,ref="${LATEST_TAG}" \
+            --cache-to type=inline \
+            .
+          
+          echo "Pushing images to Artifact Registry..."
           docker push "${FULL_IMAGE_TAG}"
           docker push "${LATEST_TAG}"
+          echo "Images pushed successfully"
           
-      - name: Get GKE Credentials (Configure kubectl)
+      - name: Get GKE Credentials
         uses: google-github-actions/get-gke-credentials@v2
         with:
           cluster_name: ${{ env.GKE_CLUSTER }}
           location: ${{ env.GKE_ZONE }}
 
-      - name: Wait for 2 Minutes (Pre-Deployment Pause)
+      - name: Verify cluster connectivity
         run: |
-          echo "Waiting 120 seconds for GKE API server stability..."
-          sleep 120
+          echo "Verifying cluster connectivity..."
+          kubectl cluster-info
+          kubectl get nodes
 
-      - name: Apply Kubernetes Manifest (Direct Apply)
+      - name: Create or Update Kubernetes Secrets
         run: |
-          MANIFEST_PATH=${{ env.MANIFEST_PATH }}
+          echo "Managing Kubernetes secrets..."
           
-          echo "Applying deployment from ${MANIFEST_PATH}..."
-          kubectl apply -f ${MANIFEST_PATH}
-
-      - name: Wait for 2 Minutes (Pre-Deployment Pause)
-        run: |
-          echo "Waiting 120 seconds for GKE API server stability..."
-          sleep 60
-
-      - name: Verify Deployment Rollout Status
-        run: |
-          echo "Waiting for deployment ${{ env.DEPLOYMENT_NAME }} to complete rollout..."
-          # This command blocks until Pods are ready (checking the image tag update)
-          kubectl rollout status deployment/${{ env.DEPLOYMENT_NAME }} --timeout=5m
-          echo "Deployment successful!"
-
-      - name: Wait for 2 Minutes (Pre-Deployment Pause)
-        run: |
-          echo "Waiting 120 seconds for GKE API server stability..."
-          sleep 120
-
-      - name: Show Service Status
-        run: |
-          echo "Service Status (External IP):"
-          kubectl get service ${{ env.DEPLOYMENT_NAME }}-service
-          kubectl get nodes -o wide
+          # Create temporary file for Service Account JSON (secure)
+          umask 077
+          echo '${{ secrets.GCP_SA }}' > ./gcp-sa-key.json
           
+          # Create or update the secret (idempotent)
+          kubectl create secret generic iris-classifier-secrets \
+            --from-file=gcp-sa-key.json=./gcp-sa-key.json \
+            --from-literal=MLOPS_TRACKING_URI='${{ secrets.MLOPS_TRACKING_URI }}' \
+            --dry-run=client -o yaml | kubectl apply -f -
+            
+          # Securely clean up
+          shred -u ./gcp-sa-key.json 2>/dev/null || rm -f ./gcp-sa-key.json
+          echo "Secrets configured successfully"
+
+      - name: Update Deployment Manifest
+        env:
+          IMAGE_TAG: ${{ steps.build-info.outputs.image-tag }}
+        run: |
+          NEW_IMAGE="${{ env.AR_REGION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.AR_REPOSITORY }}/${{ env.IMAGE_NAME }}:${IMAGE_TAG}"
+          echo "Updating deployment manifest with image: ${NEW_IMAGE}"
+          sed -i "s|image: .*|image: ${NEW_IMAGE}|g" ${{ env.MANIFEST_PATH }}
+          
+          echo "Updated manifest:"
+          grep "image:" ${{ env.MANIFEST_PATH }}
+
+      - name: Apply Kubernetes Deployment
+        run: |
+          echo "Deploying to Kubernetes..."
+          kubectl apply -f ${{ env.MANIFEST_PATH }}
+          echo "Manifest applied"
+
+      - name: Wait for Deployment Rollout
+        run: |
+          echo "Waiting for deployment rollout..."
+          kubectl rollout status deployment/${{ env.DEPLOYMENT_NAME }} --timeout=${{ env.DEPLOYMENT_TIMEOUT }}
+          echo "Deployment rolled out successfully"
+
+      - name: Verify Deployment Health
+        run: |
+          echo "Verifying deployment health..."
+          
+          # Get deployment status
+          kubectl get deployment ${{ env.DEPLOYMENT_NAME }} -o wide
+          
+          # Get pod status
+          echo ""
+          echo "Pod Status:"
+          kubectl get pods -l app=${{ env.DEPLOYMENT_NAME }} -o wide
+          
+          # Check pod readiness
+          READY_PODS=$(kubectl get pods -l app=${{ env.DEPLOYMENT_NAME }} -o jsonpath='{.items[*].status.conditions[?(@.type=="Ready")].status}' | grep -o "True" | wc -l)
+          TOTAL_PODS=$(kubectl get pods -l app=${{ env.DEPLOYMENT_NAME }} --no-headers | wc -l)
+          
+          echo ""
+          echo "Ready Pods: ${READY_PODS}/${TOTAL_PODS}"
+          
+          if [ "$READY_PODS" -eq "0" ]; then
+            echo "No pods are ready!"
+            kubectl describe pods -l app=${{ env.DEPLOYMENT_NAME }}
+            exit 1
+          fi
+          
+          echo "Deployment health check passed"
+
+      - name: Get Service Information
+        id: get-url
+        run: |
+          echo "Fetching service information..."
+          
+          # Wait for external IP (with timeout)
+          for i in {1..30}; do
+            EXTERNAL_IP=$(kubectl get service ${{ env.DEPLOYMENT_NAME }}-service -o jsonpath='{.status.loadBalancer.ingress[0].ip}' 2>/dev/null || echo "")
+            if [ -n "$EXTERNAL_IP" ]; then
+              echo "url=http://${EXTERNAL_IP}" >> $GITHUB_OUTPUT
+              echo "Service URL: http://${EXTERNAL_IP}"
+              break
+            fi
+            echo "Waiting for external IP... (attempt $i/30)"
+            sleep 10
+          done
+          
+          # Show service details
+          echo ""
+          echo "Service Details:"
+          kubectl get service ${{ env.DEPLOYMENT_NAME }}-service -o wide
+          
+          echo ""
+          echo "Endpoints:"
+          kubectl get endpoints ${{ env.DEPLOYMENT_NAME }}-service
+
+      - name: Deployment Summary
+        if: success()
+        run: |
+          echo "## Deployment Successful" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Image:** \`${{ steps.build-info.outputs.image-tag }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "**Commit:** \`${{ github.sha }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "**Branch:** \`${{ github.ref_name }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "**Cluster:** \`${{ env.GKE_CLUSTER }}\`" >> $GITHUB_STEP_SUMMARY
+          
+          if [ -n "${{ steps.get-url.outputs.url }}" ]; then
+            echo "**URL:** ${{ steps.get-url.outputs.url }}" >> $GITHUB_STEP_SUMMARY
+          fi
+
+      - name: Rollback on Failure
+        if: failure()
+        run: |
+          echo "Deployment failed! Initiating rollback..."
+          kubectl rollout undo deployment/${{ env.DEPLOYMENT_NAME }} || true
+          echo "Rollback initiated. Check cluster status manually."

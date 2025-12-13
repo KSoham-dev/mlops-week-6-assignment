@@ -1,17 +1,23 @@
 # For more information, please refer to https://aka.ms/vscode-docker-python
 FROM python:3.12-slim
 
+# 1. Copy uv binary directly from the official image (Fastest method)
+COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
+
 EXPOSE 8000
 
-# Keeps Python from generating .pyc files in the container
-ENV PYTHONDONTWRITEBYTECODE=1
-
-# Turns off buffering for easier container logging
+# 2. Optimization Configuration
+# UV_COMPILE_BYTECODE=1: Compiles python files during install for faster app startup
+# UV_LINK_MODE=copy: Ensures files are copied (safer for Docker layers)
+# PYTHONUNBUFFERED=1: Turns off buffering for easier container logging
+ENV UV_COMPILE_BYTECODE=1
+ENV UV_LINK_MODE=copy
 ENV PYTHONUNBUFFERED=1
 
-# Install pip requirements
+# 3. Install dependencies using uv into system Python
+# We removed "PYTHONDONTWRITEBYTECODE=1" because we WANT compiled files for speed now
 COPY requirements.txt .
-RUN python -m pip install -r requirements.txt
+RUN uv pip install --system --no-cache -r requirements.txt
 
 WORKDIR /app
 COPY . /app
