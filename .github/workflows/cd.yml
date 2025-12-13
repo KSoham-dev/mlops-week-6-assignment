@@ -64,19 +64,11 @@ jobs:
         run: |
           echo "Creating new GKE cluster..."
           gcloud container clusters create ${{ env.GKE_CLUSTER }} \
-            --zone ${{ env.GKE_ZONE }} \
-            --num-nodes=1 \
-            --machine-type=e2-small \
-            --disk-size=10 \
-            --disk-type=pd-standard \
-            --enable-autoscaling \
-            --min-nodes=1 \
-            --max-nodes=3 \
-            --enable-autorepair \
-            --enable-autoupgrade \
-            --release-channel=regular \
-            --enable-stackdriver-kubernetes \
-            --project=${{ env.PROJECT_ID }}
+              --zone ${{ env.GKE_ZONE }} \
+              --num-nodes=1 \
+              --machine-type=e2-small \
+              --release-channel=regular \
+              --project=${{ env.PROJECT_ID }}
           echo "Cluster created successfully"
 
   build-and-deploy:
@@ -175,7 +167,6 @@ jobs:
         run: |
           echo "Verifying cluster connectivity..."
           kubectl cluster-info
-          kubectl get nodes
 
       - name: Create or Update Kubernetes Secrets
         run: |
