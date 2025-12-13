@@ -25,6 +25,7 @@ env:
   GKE_ZONE: us-east1
   DEPLOYMENT_NAME: iris-classifier-fastapi
   MANIFEST_PATH: k8s/deployment.yaml
+  DEPLOYMENT_TIMEOUT: 5m
   
 jobs:
 
